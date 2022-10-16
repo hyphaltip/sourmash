@@ -1676,6 +1676,7 @@ dependencies = [
  "chrono",
  "counter",
  "criterion",
+ "csv",
  "finch",
  "fixedbitset",
  "flume",

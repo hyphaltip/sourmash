@@ -1,14 +1,12 @@
-use std::borrow::{Borrow, BorrowMut};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 use std::iter::Iterator;
 use std::str;
 
-use dashmap::DashMap;
-use nohash_hasher::{BuildNoHashHasher, NoHashHasher};
+use nohash_hasher::BuildNoHashHasher;
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
@@ -21,7 +19,7 @@ use crate::Error;
 pub type Color = u64;
 pub type Idx = u64;
 type IdxTracker = (vec_collections::VecSet<[Idx; 4]>, u64);
-type ColorToIdx = DashMap<Color, IdxTracker, BuildNoHashHasher<Color>>;
+type ColorToIdx = HashMap<Color, IdxTracker, BuildNoHashHasher<Color>>;
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,13 +394,13 @@ impl Colors {
     /// Future optimization: store a count for each color, so we can track
     /// if there are extra colors that can be removed at the end.
     /// (the count is decreased whenever a new color has to be created)
-    pub fn update<'a, I: IntoIterator<Item = Idx>>(
-        &self,
+    pub fn update<'a, I: IntoIterator<Item = &'a Idx>>(
+        &mut self,
         current_color: Option<Color>,
         new_idxs: I,
     ) -> Result<Color, Error> {
         if let Some(color) = current_color {
-            if let Some(mut idxs) = self.colors.get_mut(&color) {
+            if let Some(idxs) = self.colors.get_mut(&color) {
                 let idx_to_add: Vec<_> = new_idxs
                     .into_iter()
                     .filter(|new_idx| !idxs.0.contains(new_idx))
@@ -417,15 +415,13 @@ impl Colors {
                     // or find an existing color that have the same idxs
 
                     let mut idxs = idxs.clone();
-                    idxs.0.extend(idx_to_add.into_iter());
+                    idxs.0.extend(idx_to_add.into_iter().cloned());
                     let new_color = Colors::compute_color(&idxs);
 
                     if new_color != color {
                         self.colors.get_mut(&color).unwrap().1 -= 1;
-                        if let Some(c) = self.colors.get(&color) {
-                            if c.1 == 0 {
-                                self.colors.remove(&color);
-                            }
+                        if self.colors[&color].1 == 0 {
+                            self.colors.remove(&color);
                         };
                     };
 
@@ -443,7 +439,7 @@ impl Colors {
             }
         } else {
             let mut idxs = IdxTracker::default();
-            idxs.0.extend(new_idxs.into_iter());
+            idxs.0.extend(new_idxs.into_iter().cloned());
             idxs.1 = 1;
             let new_color = Colors::compute_color(&idxs);
             self.colors
@@ -480,9 +476,11 @@ impl Colors {
         }
     }
 
-    pub fn indices<'a>(&'a self, color: &Color) -> Indices {
+    pub fn indices(&self, color: &Color) -> Indices {
         // TODO: what if color is not present?
-        Indices::from_color(self.colors.get(color).unwrap())
+        Indices {
+            iter: self.colors.get(color).unwrap().0.iter(),
+        }
     }
 
     pub fn retain<F>(&mut self, f: F)
@@ -493,42 +491,15 @@ impl Colors {
     }
 }
 
-#[ouroboros::self_referencing]
 pub struct Indices<'a> {
-    tracker: dashmap::mapref::one::Ref<'a, Idx, IdxTracker, BuildHasherDefault<NoHashHasher<u64>>>,
-
-    #[borrows(tracker)]
-    #[covariant]
-    iter: vec_collections::VecSetIter<std::slice::Iter<'this, Idx>>,
-}
-
-impl<'a> Indices<'a> {
-    fn from_color(
-        tracker: dashmap::mapref::one::Ref<
-            'a,
-            Idx,
-            IdxTracker,
-            BuildHasherDefault<NoHashHasher<u64>>,
-        >,
-    ) -> Self {
-        IndicesBuilder {
-            tracker: tracker,
-            iter_builder: |tracker: &dashmap::mapref::one::Ref<
-                'a,
-                Idx,
-                IdxTracker,
-                BuildHasherDefault<NoHashHasher<u64>>,
-            >| { tracker.0.iter() },
-        }
-        .build()
-    }
+    iter: vec_collections::VecSetIter<core::slice::Iter<'a, Idx>>,
 }
 
 impl<'a> Iterator for Indices<'a> {
-    type Item = Idx;
+    type Item = &'a Idx;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.with_mut(|fields| fields.iter.next().copied())
+        self.iter.next()
     }
 }
 
@@ -540,16 +511,16 @@ mod test {
     fn colors_update() {
         let mut colors = Colors::new();
 
-        let color = colors.update(None, [1_u64]).unwrap();
+        let color = colors.update(None, &[1_u64]).unwrap();
         assert_eq!(colors.len(), 1);
 
         dbg!("update");
-        let new_color = colors.update(Some(color), [1_u64]).unwrap();
+        let new_color = colors.update(Some(color), &[1_u64]).unwrap();
         assert_eq!(colors.len(), 1);
         assert_eq!(color, new_color);
 
         dbg!("upgrade");
-        let new_color = colors.update(Some(color), [2_u64]).unwrap();
+        let new_color = colors.update(Some(color), &[2_u64]).unwrap();
         assert_eq!(colors.len(), 2);
         assert_ne!(color, new_color);
     }
@@ -558,20 +529,20 @@ mod test {
     fn colors_retain() {
         let mut colors = Colors::new();
 
-        let color1 = colors.update(None, [1_u64]).unwrap();
+        let color1 = colors.update(None, &[1_u64]).unwrap();
         assert_eq!(colors.len(), 1);
         // used_colors:
         //   color1: 1
 
         dbg!("update");
-        let same_color = colors.update(Some(color1), [1_u64]).unwrap();
+        let same_color = colors.update(Some(color1), &[1_u64]).unwrap();
         assert_eq!(colors.len(), 1);
         assert_eq!(color1, same_color);
         // used_colors:
         //   color1: 2
 
         dbg!("upgrade");
-        let color2 = colors.update(Some(color1), [2_u64]).unwrap();
+        let color2 = colors.update(Some(color1), &[2_u64]).unwrap();
         assert_eq!(colors.len(), 2);
         assert_ne!(color1, color2);
         // used_colors:
@@ -579,7 +550,7 @@ mod test {
         //   color2: 1
 
         dbg!("update");
-        let same_color = colors.update(Some(color2), [2_u64]).unwrap();
+        let same_color = colors.update(Some(color2), &[2_u64]).unwrap();
         assert_eq!(colors.len(), 2);
         assert_eq!(color2, same_color);
         // used_colors:
@@ -587,7 +558,7 @@ mod test {
         //   color1: 2
 
         dbg!("upgrade");
-        let color3 = colors.update(Some(color1), [3_u64]).unwrap();
+        let color3 = colors.update(Some(color1), &[3_u64]).unwrap();
         assert_ne!(color1, color3);
         assert_ne!(color2, color3);
         // used_colors:

@@ -1,8 +1,8 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use dashmap::{DashMap, DashSet};
 use getset::{CopyGetters, Getters, Setters};
 use log::{debug, info};
 use nohash_hasher::BuildNoHashHasher;
@@ -25,18 +25,22 @@ use crate::HashIntoType;
 type SigCounter = counter::Counter<Idx>;
 
 #[derive(Serialize, Deserialize)]
-struct HashToColor(DashMap<HashIntoType, Color, BuildNoHashHasher<HashIntoType>>);
+struct HashToColor(HashMap<HashIntoType, Color, BuildNoHashHasher<HashIntoType>>);
 
 impl HashToColor {
     fn new() -> Self {
-        HashToColor(DashMap::with_hasher(BuildNoHashHasher::default()))
+        HashToColor(HashMap::<
+            HashIntoType,
+            Color,
+            BuildNoHashHasher<HashIntoType>,
+        >::with_hasher(BuildNoHashHasher::default()))
     }
 
-    fn get(&self, hash: &HashIntoType) -> Option<Color> {
-        self.0.get(hash).map(|c| c.clone().into())
+    fn get(&self, hash: &HashIntoType) -> Option<&Color> {
+        self.0.get(hash)
     }
 
-    fn retain(&mut self, hashes: &DashSet<HashIntoType>) {
+    fn retain(&mut self, hashes: &HashSet<HashIntoType>) {
         self.0.retain(|hash, _| hashes.contains(hash))
     }
 
@@ -52,7 +56,7 @@ impl HashToColor {
         let mut color = None;
 
         matched_hashes.into_iter().for_each(|hash| {
-            color = Some(colors.update(color, [dataset_id as Idx]).unwrap());
+            color = Some(colors.update(color, &[dataset_id as Idx]).unwrap());
             self.0.insert(hash, color.unwrap());
         });
     }
@@ -61,12 +65,12 @@ impl HashToColor {
         a: (HashToColor, Colors),
         b: (HashToColor, Colors),
     ) -> (HashToColor, Colors) {
-        let ((small_hashes, small_colors), (large_hashes, large_colors)) = if a.0.len() > b.0.len()
-        {
-            (b, a)
-        } else {
-            (a, b)
-        };
+        let ((small_hashes, small_colors), (mut large_hashes, mut large_colors)) =
+            if a.0.len() > b.0.len() {
+                (b, a)
+            } else {
+                (a, b)
+            };
 
         small_hashes.0.into_iter().for_each(|(hash, color)| {
             large_hashes
@@ -233,34 +237,11 @@ impl LinearRevIndex {
             )
         });
 
-        let hash_to_color = HashToColor::new();
-        let colors = Colors::new();
-
         #[cfg(feature = "parallel")]
-        filtered_sigs.for_each(|(hashes, small_colors)| {
-            hashes.0.into_iter().for_each(|(hash, color)| {
-                hash_to_color
-                    .0
-                    .entry(hash)
-                    .and_modify(|entry| {
-                        // Hash is already present.
-                        // Update the current color by adding the indices from
-                        // small_colors.
-                        let ids = small_colors.indices(&color);
-                        let new_color = colors.update(Some(*entry), ids).unwrap();
-                        *entry = new_color;
-                    })
-                    .or_insert_with(|| {
-                        // In this case, the hash was not present yet.
-                        // we need to create the same color from small_colors
-                        // into large_colors.
-                        let ids = small_colors.indices(&color);
-                        let new_color = colors.update(None, ids).unwrap();
-                        assert_eq!(new_color, color);
-                        new_color
-                    });
-            });
-        });
+        let (hash_to_color, colors) = filtered_sigs.reduce(
+            || (HashToColor::new(), Colors::default()),
+            HashToColor::reduce_hashes_colors,
+        );
 
         #[cfg(not(feature = "parallel"))]
         let (hash_to_color, colors) = filtered_sigs.fold(
@@ -559,7 +540,7 @@ impl LinearRevIndex {
             // Prepare counter for finding the next match by decrementing
             // all hashes found in the current match in other datasets
             // TODO: maybe par_iter?
-            let to_remove: DashSet<u64> = Default::default();
+            let mut to_remove: HashSet<u64> = Default::default();
             to_remove.insert(dataset_id);
 
             for (dataset, value) in counter.iter_mut() {
@@ -578,7 +559,7 @@ impl LinearRevIndex {
                 };
             }
             to_remove.iter().for_each(|dataset_id| {
-                counter.remove(&dataset_id);
+                counter.remove(dataset_id);
             });
             matches.push(result);
         }
@@ -652,12 +633,12 @@ impl RevIndex {
             // TODO: avoid loading full revindex if query != None
             /*
             struct PartialRevIndex<T> {
-                hashes_to_keep: Option<DashSet<HashIntoType>>,
+                hashes_to_keep: Option<HashSet<HashIntoType>>,
                 marker: PhantomData<fn() -> T>,
             }
 
             impl<T> PartialRevIndex<T> {
-                pub fn new(hashes_to_keep: DashSet<u64>) -> Self {
+                pub fn new(hashes_to_keep: HashSet<u64>) -> Self {
                     PartialRevIndex {
                         hashes_to_keep: Some(hashes_to_keep),
                         marker: PhantomData,
@@ -666,9 +647,9 @@ impl RevIndex {
             }
             */
 
-            let mut hashes: DashSet<u64> = DashSet::new();
+            let mut hashes: HashSet<u64> = HashSet::new();
             for q in qs {
-                hashes.extend(q.iter_mins().copied());
+                hashes.extend(q.iter_mins());
             }
 
             //let mut revindex: RevIndex = PartialRevIndex::new(hashes).deserialize(&rdr).unwrap();
@@ -805,7 +786,8 @@ impl RevIndex {
         query
             .iter_mins()
             .filter_map(|hash| self.hash_to_color.get(hash))
-            .flat_map(|color| self.colors.indices(&color))
+            .flat_map(|color| self.colors.indices(color))
+            .cloned()
             .collect()
     }
 
@@ -840,7 +822,7 @@ impl RevIndex {
                 // all hashes found in the current match in other datasets
                 for hash in match_mh.iter_mins() {
                     if let Some(color) = self.hash_to_color.get(hash) {
-                        counter.subtract(self.colors.indices(&color));
+                        counter.subtract(self.colors.indices(color).cloned());
                     }
                 }
                 counter.remove(&dataset_id);

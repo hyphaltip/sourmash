@@ -406,7 +406,8 @@ impl RevIndex {
         // verify data match up to this point
         let mut max_dataset_id = 0;
         let to_skip = iter
-            .map(|(key, value)| {
+            .map(|result| {
+                let (key, value) = result.unwrap();
                 let current_dataset_id = (&key[..]).read_u64::<LittleEndian>().unwrap();
 
                 let filename = &index_sigs[current_dataset_id as usize];

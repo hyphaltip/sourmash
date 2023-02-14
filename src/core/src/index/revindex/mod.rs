@@ -478,7 +478,8 @@ fn stats_for_cf(db: Arc<DB>, cf_name: &str, deep_check: bool, quick: bool) {
     let mut vcounts = Histogram::new();
     let mut datasets: Datasets = Default::default();
 
-    for (key, value) in iter {
+    for result in iter {
+        let (key, value) = result.unwrap();
         let _k = (&key[..]).read_u64::<LittleEndian>().unwrap();
         kcount += key.len();
 

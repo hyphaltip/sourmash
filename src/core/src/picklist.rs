@@ -20,10 +20,16 @@ pub struct Picklist {
     pickstyle: PickStyle,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 #[repr(u32)]
 pub enum PickStyle {
-    #[default]
     Include = 1,
     Exclude = 2,
+}
+
+// TODO: remove with MSRV 1.62 and use derive(Default) instead
+impl std::default::Default for PickStyle {
+    fn default() -> Self {
+        PickStyle::Include
+    }
 }

@@ -7,6 +7,7 @@ use std::str;
 
 use nohash_hasher::BuildNoHashHasher;
 use once_cell::sync::Lazy;
+use vec_collections::AbstractVecSet;
 
 use crate::Error;
 

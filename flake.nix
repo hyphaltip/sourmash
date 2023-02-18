@@ -123,6 +123,7 @@
             cargo-outdated
             cargo-udeps
             nixpkgs-fmt
+            cargo-deny
 
             llvmPackages_13.libclang
             llvmPackages_13.libcxxClang

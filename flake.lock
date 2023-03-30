@@ -38,7 +38,6 @@
     },
     "root": {
       "inputs": {
-        "naersk": "naersk",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay",
         "utils": "utils"

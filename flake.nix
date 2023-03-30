@@ -11,16 +11,9 @@
         flake-utils.follows = "utils";
       };
     };
-
-    naersk = {
-      url = "github:nix-community/naersk";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-      };
-    };
   };
 
-  outputs = { self, nixpkgs, naersk, rust-overlay, utils }:
+  outputs = { self, nixpkgs, rust-overlay, utils }:
     utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -36,10 +29,6 @@
           cargo = rustVersion;
           rustc = rustVersion;
         };
-        naersk-lib = naersk.lib."${system}".override {
-          cargo = rustPlatform.rust.cargo;
-          rustc = rustPlatform.rust.rustc;
-        };
 
         python = pkgs.python310Packages;
 
@@ -49,10 +38,13 @@
       {
         packages = {
 
-          lib = naersk-lib.buildPackage {
+          lib = rustPlatform.buildRustPackage {
+            name = "libsourmash";
             pname = "libsourmash";
-            root = ./.;
+            src = lib.cleanSource ./.;
             copyLibs = true;
+            cargoLock.lockFile = ./Cargo.lock;
+            nativeBuildInputs = with rustPlatform; [ bindgenHook ];
           };
 
           sourmash = python.buildPythonPackage rec {
@@ -66,7 +58,7 @@
               lockFile = ./Cargo.lock;
             };
 
-            nativeBuildInputs = with rustPlatform; [ cargoSetupHook maturinBuildHook ];
+            nativeBuildInputs = with rustPlatform; [ cargoSetupHook maturinBuildHook bindgenHook ];
 
             buildInputs = lib.optionals stdenv.isDarwin [ libiconv ];
             propagatedBuildInputs = with python; [ cffi deprecation cachetools bitstring numpy scipy matplotlib screed ];
@@ -93,9 +85,7 @@
         defaultPackage = self.packages.${system}.sourmash;
 
         devShell = mkShell {
-          nativeBuildInputs = [
-            clang_13
-          ];
+          nativeBuildInputs = [ rustPlatform.bindgenHook ];
 
           buildInputs = [
             rustPlatform.rust.cargo
@@ -124,13 +114,7 @@
             cargo-udeps
             nixpkgs-fmt
             cargo-deny
-
-            llvmPackages_13.libclang
-            llvmPackages_13.libcxxClang
           ];
-
-          BINDGEN_EXTRA_CLANG_ARGS = "-isystem ${llvmPackages_13.libclang.lib}/lib/clang/${lib.getVersion clang}/include";
-          LIBCLANG_PATH = "${llvmPackages_13.libclang.lib}/lib";
 
           # Needed for matplotlib
           LD_LIBRARY_PATH = "${stdenv.cc.cc.lib}/lib64:$LD_LIBRARY_PATH";

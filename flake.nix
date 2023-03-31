@@ -104,7 +104,7 @@
 
             wasmtime
             wasm-pack
-            nodejs-16_x
+            nodejs-18_x
 
             #py-spy
             heaptrack

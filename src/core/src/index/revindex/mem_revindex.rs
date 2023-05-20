@@ -177,8 +177,12 @@ impl LinearRevIndex {
 
         let storage = storage.map(Arc::new);
 
+        let sig_files = sig_files.unwrap_or_else(|| {
+            todo!("generate manifest for ref_sigs");
+        });
+
         LinearRevIndex {
-            sig_files: sig_files.unwrap(),
+            sig_files,
             template: template.clone(),
             ref_sigs,
             storage,

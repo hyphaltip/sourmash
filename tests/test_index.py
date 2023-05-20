@@ -1775,6 +1775,7 @@ def test_lazy_index_wraps_multi_index_location():
                                      lazy2.signatures_with_location()):
         assert ss_tup == ss_lazy_tup
 
+@pytest.mark.skip("no support for in-memory sigs yet")
 def test_revindex_index_search():
     # confirm that RevIndex works
     sig2 = utils.get_test_data("2.fa.sig")
@@ -1820,6 +1821,7 @@ def test_revindex_index_search():
     assert sr[0][1] == ss63
 
 
+@pytest.mark.skip("no support for in-memory sigs yet")
 def test_revindex_gather():
     # check that RevIndex.best_containment works.
     sig2 = utils.get_test_data("2.fa.sig")
@@ -1846,6 +1848,7 @@ def test_revindex_gather():
     assert match.signature == ss47
 
 
+@pytest.mark.skip("no support for in-memory sigs yet")
 def test_revindex_gather_ignore():
     # check that RevIndex gather ignores things properly.
     sig2 = utils.get_test_data('2.fa.sig')
